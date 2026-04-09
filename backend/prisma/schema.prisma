@@ -1,0 +1,132 @@
+// prisma/schema.prisma
+// ORM do buscapéTravels — define todos os modelos do banco de dados
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// USUÁRIO
+// Cada membro da família tem sua própria conta
+// ─────────────────────────────────────────────
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String   // hash bcrypt
+  avatar    String?  // URL opcional de foto
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  tripsCreated  Trip[]        @relation("TripCreator")
+  memberships   TripMember[]
+  expensesPaid  Expense[]     @relation("ExpensePayer") // quem adiantou o $
+  payments      Payment[]     // parcelas pagas por este usuário
+}
+
+// ─────────────────────────────────────────────
+// VIAGEM
+// Ex: "Viagem Família - Florianópolis 2025"
+// ─────────────────────────────────────────────
+model Trip {
+  id          String    @id @default(uuid())
+  name        String    // "Florianópolis 2025"
+  destination String    // "Florianópolis, SC"
+  description String?
+  startDate   DateTime
+  endDate     DateTime
+  coverImage  String?   // URL de imagem de capa
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Quem criou a viagem
+  creatorId String
+  creator   User   @relation("TripCreator", fields: [creatorId], references: [id])
+
+  // Relações
+  members   TripMember[]
+  expenses  Expense[]
+}
+
+// ─────────────────────────────────────────────
+// MEMBRO DA VIAGEM
+// Tabela pivô: quem participa de cada viagem
+// ─────────────────────────────────────────────
+model TripMember {
+  id       String   @id @default(uuid())
+  joinedAt DateTime @default(now())
+
+  // Chaves estrangeiras
+  userId String
+  tripId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tripId]) // um usuário só entra uma vez por viagem
+}
+
+// ─────────────────────────────────────────────
+// GASTO
+// Pode ser "base" (dividido igual) ou "individual" (só pra alguns)
+// ─────────────────────────────────────────────
+model Expense {
+  id          String      @id @default(uuid())
+  title       String      // "Airbnb Casa da Praia", "Jantar restaurante"
+  description String?
+  amount      Decimal     @db.Decimal(10, 2) // valor total do gasto
+  type        ExpenseType // BASE ou INDIVIDUAL
+  category    String?     // "hospedagem", "alimentação", "passeio"...
+  date        DateTime    @default(now())
+  createdAt   DateTime    @default(now())
+
+  // Quem adiantou o dinheiro (pode ser qualquer membro)
+  payerId String
+  payer   User   @relation("ExpensePayer", fields: [payerId], references: [id])
+
+  // A qual viagem pertence
+  tripId String
+  trip   Trip   @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  // Parcelas geradas automaticamente para cada participante
+  payments Payment[]
+}
+
+enum ExpenseType {
+  BASE       // dividido igualmente entre todos os membros da viagem
+  INDIVIDUAL // dividido só entre os membros selecionados
+}
+
+// ─────────────────────────────────────────────
+// PAGAMENTO (PARCELA)
+// Representa a cota de UM usuário em UM gasto
+// Ex: Maria deve R$150 do Airbnb → 1 Payment
+// ─────────────────────────────────────────────
+model Payment {
+  id        String        @id @default(uuid())
+  amount    Decimal       @db.Decimal(10, 2) // valor desta parcela
+  status    PaymentStatus @default(PENDING)
+  paidAt    DateTime?     // quando foi marcado como pago
+  createdAt DateTime      @default(now())
+
+  // A quem pertence esta parcela
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // De qual gasto
+  expenseId String
+  expense   Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, expenseId]) // um usuário tem só uma parcela por gasto
+}
+
+enum PaymentStatus {
+  PENDING // ainda deve
+  PAID    // já pagou
+}
